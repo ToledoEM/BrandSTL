@@ -1,6 +1,6 @@
 # STL Branding Tool
 
-Carve text into STL 3D models using Blender's robust boolean operations engine.
+Carve text into STL 3D models using Blender's boolean operations engine.
 
 ## Features
 
@@ -13,6 +13,8 @@ Carve text into STL 3D models using Blender's robust boolean operations engine.
 ## Requirements
 
 - Blender (installed at `/Applications/Blender.app/Contents/MacOS/Blender` on macOS)
+- Get it at: [https://www.blender.org/download/](https://www.blender.org/download/)
+
 
 ## Usage
 
@@ -72,3 +74,7 @@ Parameters:
 ## Dependencies
 
 - Blender 3.0 or higher with Python API
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
