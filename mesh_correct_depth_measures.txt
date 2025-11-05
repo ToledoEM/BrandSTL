@@ -1,0 +1,6 @@
+-------MEASUREMENT DATA---------
+
+mesh_correct_depth.stl
+
+ID : Dist [pointA][pointB]
+M0 : 64.8148 [75.8389, -1.43921, 64.6559] [76.1442, 0.70182, -0.12286] 

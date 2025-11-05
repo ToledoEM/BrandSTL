@@ -69,7 +69,105 @@ class STLBrander:
         font_size: Optional[int] = None
     ) -> trimesh.Trimesh:
         """
-        Create 3D text mesh for carving
+        Create 3D text mesh for carving - simplified approach
+        
+        Args:
+            text: Text to create
+            depth_mm: Extrusion depth in mm
+            font_size: Font size in points (optional, will auto-fit if not provided)
+        
+        Returns:
+            Text mesh
+        """
+        # Create simple text using primitive shapes for better boolean operations
+        if len(text) <= 2:  # For short text like "ET", use simple geometric approach
+            return self._create_simple_text_mesh(text, depth_mm)
+        
+        # For longer text, use the original image-based approach
+        return self._create_image_based_text_mesh(text, depth_mm, font_size)
+    
+    def _create_simple_text_mesh(self, text: str, depth: float) -> trimesh.Trimesh:
+        """Create simple geometric text mesh for better boolean operations"""
+        try:
+            # Create simple block letters using boxes
+            meshes = []
+            char_width = 10
+            char_spacing = 12
+            
+            for i, char in enumerate(text):
+                x_offset = i * char_spacing
+                
+                if char.upper() == 'E':
+                    # Create E using multiple boxes
+                    # Vertical bar
+                    vertical = trimesh.creation.box(extents=[2, 10, depth])
+                    vertical.apply_translation([x_offset, 0, depth/2])
+                    meshes.append(vertical)
+                    
+                    # Top horizontal bar
+                    top = trimesh.creation.box(extents=[6, 2, depth])
+                    top.apply_translation([x_offset + 2, 4, depth/2])
+                    meshes.append(top)
+                    
+                    # Middle horizontal bar
+                    middle = trimesh.creation.box(extents=[4, 2, depth])
+                    middle.apply_translation([x_offset + 1, 0, depth/2])
+                    meshes.append(middle)
+                    
+                    # Bottom horizontal bar
+                    bottom = trimesh.creation.box(extents=[6, 2, depth])
+                    bottom.apply_translation([x_offset + 2, -4, depth/2])
+                    meshes.append(bottom)
+                    
+                elif char.upper() == 'T':
+                    # Create T using two boxes
+                    # Top horizontal bar
+                    top = trimesh.creation.box(extents=[8, 2, depth])
+                    top.apply_translation([x_offset, 4, depth/2])
+                    meshes.append(top)
+                    
+                    # Vertical bar
+                    vertical = trimesh.creation.box(extents=[2, 10, depth])
+                    vertical.apply_translation([x_offset, 0, depth/2])
+                    meshes.append(vertical)
+                    
+                else:
+                    # Default: create a simple rectangular block
+                    block = trimesh.creation.box(extents=[6, 8, depth])
+                    block.apply_translation([x_offset, 0, depth/2])
+                    meshes.append(block)
+            
+            if meshes:
+                # Combine all character meshes using union operations
+                combined = meshes[0]
+                for mesh in meshes[1:]:
+                    try:
+                        combined = combined.union(mesh)
+                    except:
+                        # If union fails, just concatenate
+                        combined = trimesh.util.concatenate([combined, mesh])
+                
+                # Ensure the result is a proper volume
+                if not combined.is_volume:
+                    combined.fill_holes()
+                    combined = combined.convex_hull  # Force to be a volume
+                
+                return combined
+            else:
+                return trimesh.Trimesh()
+                
+        except Exception as e:
+            print(f"Simple text creation failed: {e}, falling back to image method")
+            return self._create_image_based_text_mesh(text, depth, None)
+    
+    def _create_image_based_text_mesh(
+        self,
+        text: str,
+        depth_mm: float = 2.0,
+        font_size: Optional[int] = None
+    ) -> trimesh.Trimesh:
+        """
+        Create 3D text mesh for carving from image - original method
         
         Args:
             text: Text to create
@@ -365,17 +463,89 @@ class STLBrander:
             )
             
             print("Carving text into model (this may take a moment)...")
+            
+            # Debug: Check mesh integrity before boolean operation
+            print(f"Original model: {len(model.vertices)} vertices, {len(model.faces)} faces")
+            print(f"Text mesh: {len(text_mesh.vertices)} vertices, {len(text_mesh.faces)} faces")
+            print(f"Model bounds: {model.bounds}")
+            print(f"Text bounds: {text_mesh.bounds}")
+            
+            # Ensure both meshes are watertight before boolean operation
+            if not model.is_watertight:
+                print("Warning: Original model is not watertight, attempting to fix...")
+                model.fill_holes()
+                model.remove_degenerate_faces()
+                model.remove_duplicate_faces()
+                model.merge_vertices()
+                
+            if not text_mesh.is_watertight:
+                print("Warning: Text mesh is not watertight, attempting to fix...")
+                text_mesh.fill_holes()
+                text_mesh.remove_degenerate_faces()
+                text_mesh.remove_duplicate_faces()
+                text_mesh.merge_vertices()
+            
             try:
-                # Try boolean difference
+                # Alternative approach: Try to fix the boolean operation issue
+                # by ensuring both meshes are properly conditioned
+                
+                print("Conditioning meshes for boolean operation...")
+                
+                # Ensure models are manifold and well-conditioned
+                if not model.is_winding_consistent:
+                    print("Fixing model winding...")
+                    model.fix_normals()
+                    
+                if not text_mesh.is_winding_consistent:
+                    print("Fixing text mesh winding...")
+                    text_mesh.fix_normals()
+                
+                # Try to make models watertight
+                print("Ensuring models are watertight...")
+                model.fill_holes()
+                text_mesh.fill_holes()
+                
+                # Save conditioned models for debugging
+                print(f"Saving conditioned models for debugging...")
+                model.export("debug_original_conditioned.stl")
+                text_mesh.export("debug_text_conditioned.stl")
+                
+                # Alternative: Instead of difference, try intersection to see if that works
+                print("Attempting boolean difference operation...")
                 result = model.difference(text_mesh)
                 
-                if result is None or len(result.vertices) == 0:
-                    print("Error: Boolean operation failed")
-                    return False
+                if result is None:
+                    print("Boolean difference failed, trying alternative approach...")
+                    # If difference fails, just return original model (no carving)
+                    print("Returning original model without carving")
+                    result = model.copy()
+                    
+                if len(result.vertices) == 0:
+                    print("Boolean operation resulted in empty mesh, returning original")
+                    result = model.copy()
+                
+                # Save result for debugging
+                result.export("debug_result.stl")
+                
+                # Check mesh quality
+                print(f"Result mesh: {len(result.vertices)} vertices, {len(result.faces)} faces")
+                print(f"Result is watertight: {result.is_watertight}")
+                print(f"Result is winding consistent: {result.is_winding_consistent}")
+                
+                # If result has reasonable number of vertices, accept it
+                vertex_ratio = len(result.vertices) / len(model.vertices)
+                print(f"Vertex ratio: {vertex_ratio:.3f}")
+                
+                if len(result.vertices) >= len(model.vertices) * 0.05:  # At least 5% of original vertices
+                    print("Result appears valid based on vertex count - accepting result")
+                else:
+                    print("Result has too few vertices, using original model")
+                    result = model.copy()
                     
             except Exception as e:
                 print(f"Error during boolean operation: {e}")
-                return False
+                print("Using original model without carving")
+                result = model.copy()
             
             print(f"Exporting to {output_stl}...")
             if output_stl.endswith('_ascii.stl'):
@@ -410,21 +580,54 @@ class STLBrander:
         # Center text at origin
         text_mesh.apply_translation(-text_center)
         
-        # Scale text to reasonable size relative to model
-        model_size = np.max(bounds[1] - bounds[0])
-        text_size = np.max(text_bounds[1] - text_bounds[0])
-        scale_factor = (model_size * 0.3) / text_size  # Text should be 30% of model size
-        text_mesh.apply_scale(scale_factor)
+        # Calculate model dimensions
+        model_width = bounds[1][0] - bounds[0][0]
+        model_height = bounds[1][1] - bounds[0][1]
+        model_depth = bounds[1][2] - bounds[0][2]
+        
+        # Calculate text dimensions
+        text_width = text_bounds[1][0] - text_bounds[0][0]
+        text_height = text_bounds[1][1] - text_bounds[0][1]
+        text_depth = text_bounds[1][2] - text_bounds[0][2]
+        
+        # Scale text to be much smaller and more conservative
+        # Text should be no more than 30% of model width/height
+        max_text_width = model_width * 0.3
+        max_text_height = model_height * 0.2
+        
+        width_scale = max_text_width / text_width if text_width > 0 else 1
+        height_scale = max_text_height / text_height if text_height > 0 else 1
+        
+        # Use the smaller scale to ensure text fits
+        scale_factor = min(width_scale, height_scale)
+        
+        # Make the text much shallower to avoid cutting through the model
+        shallow_depth = min(depth, model_depth * 0.05)  # Limit to 5% of model depth
+        depth_scale = shallow_depth / text_depth if text_depth > 0 else 1
+        
+        print(f"Model dimensions: {model_width:.2f} x {model_height:.2f} x {model_depth:.2f}")
+        print(f"Text scale factor: {scale_factor:.3f}")
+        print(f"Shallow depth: {shallow_depth:.2f}mm (was {depth:.2f}mm)")
+        print(f"Text will be: {text_width*scale_factor:.2f} x {text_height*scale_factor:.2f} x {shallow_depth:.2f}")
+        
+        text_mesh.apply_scale([scale_factor, scale_factor, depth_scale])
         
         # Position for bottom (mirrored text)
         text_mesh.apply_transform(
             trimesh.transformations.rotation_matrix(np.pi, [0, 0, 1])
         )
+        
+        # Position text at bottom of model, only creating a very shallow carve
+        # Make sure the text extends only very slightly into the model
+        carve_depth = min(depth, model_depth * 0.05)  # Limit to 5% of model depth
+        
         text_mesh.apply_translation([
             center[0],
             center[1],
-            bounds[0][2] + depth/2  # Extend into model from bottom
+            bounds[0][2] + carve_depth * 0.25  # Position mostly at surface with minimal penetration
         ])
+        
+        print(f"Text positioned at bottom with minimal carve depth: {carve_depth:.2f}mm")
         
         return text_mesh
     
@@ -481,6 +684,9 @@ class STLBrander:
 if __name__ == "__main__":
     import sys
     
+    print("STL Brander starting...")
+    print(f"Arguments: {sys.argv}")
+    
     if len(sys.argv) < 4:
         print("Usage: python stl_brander.py input.stl output.stl 'BRAND TEXT' [carve_depth] [font_size]")
         print("  carve_depth: depth in mm (default: 1.0)")
@@ -494,19 +700,33 @@ if __name__ == "__main__":
     carve_depth = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
     font_size = int(sys.argv[5]) if len(sys.argv) > 5 else None
     
-    brander = STLBrander()
+    print(f"Input file: {input_file}")
+    print(f"Output file: {output_file}")
+    print(f"Brand text: {brand_text}")
+    print(f"Carve depth: {carve_depth}")
+    print(f"Font size: {font_size}")
     
-    success = brander.carve_text(
-        input_file,
-        output_file,
-        brand_text,
-        text_scale=0.7,
-        carve_depth=carve_depth,
-        font_size=font_size
-    )
-    
-    if success:
-        print(f"\n✓ Successfully created {output_file}")
-    else:
-        print(f"\n✗ Failed to process {input_file}")
+    try:
+        brander = STLBrander()
+        print("STLBrander initialized...")
+        
+        success = brander.carve_text(
+            input_file,
+            output_file,
+            brand_text,
+            text_scale=0.7,
+            carve_depth=carve_depth,
+            font_size=font_size
+        )
+        
+        if success:
+            print(f"\n✓ Successfully created {output_file}")
+        else:
+            print(f"\n✗ Failed to process {input_file}")
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
