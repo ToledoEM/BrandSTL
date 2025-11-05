@@ -2,6 +2,9 @@
 
 Carve text into STL 3D models programmatically with high-quality text rendering and automatic mirroring for bottom positioning.
 
+![](branded_vase_base.png)
+
+
 ## Features
 
 - **Automatic Text Mirroring**: Text is automatically mirrored (rotated 180°) for correct reading when viewing from below
