@@ -2,6 +2,14 @@
 
 Carve text into STL 3D models using Blender's boolean operations engine.
 
+![`/Applications/Blender.app/Contents/MacOS/Blender --background --python stl_brander_blender.py -- Stanford_Bunny.stl Stanford_Bunny_sign.stl "Stanford" 2 10`](Branded_Stanford_Bunny.png)
+
+Output of command:
+```bash
+/Applications/Blender.app/Contents/MacOS/Blender --background --python stl_brander_blender.py -- Stanford_Bunny.stl Stanford_Bunny_sign.stl "Stanford" 2 10
+```
+
+
 ## Features
 
 - **Blender-Powered**: Uses Blender's FAST boolean solver for reliable mesh operations

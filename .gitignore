@@ -63,3 +63,6 @@ uv.lock
 branded_stls/
 output/
 temp/
+/.quarto/
+**/*.quarto_ipynb
+/README_files/*
