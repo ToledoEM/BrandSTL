@@ -15,13 +15,13 @@ uv pip install trimesh numpy pillow scipy scikit-image
 ### Single File
 
 ```bash
-uv run python stl_brander.py input.stl output.stl "BRAND TEXT" [position] [depth] [font_height_mm]
+uv run python stl_brander.py input.stl output.stl "BRAND TEXT" [position] [depth] [font_size]
 ```
 
 Parameters:
 - position: bottom, top, front, back, left, right (default: bottom)
 - depth: carve depth in mm (default: 1.0)
-- font_height_mm: font height in mm (optional, will auto-fit if not provided)
+- font_size: font size in points (optional, will auto-fit if not provided)
 
 ### Batch Processing
 
@@ -34,7 +34,7 @@ OUTPUT_FOLDER = "branded_stls"
 POSITION = "bottom"
 TEXT_SCALE = 0.7
 CARVE_DEPTH = 1.0
-FONT_HEIGHT_MM = None  # Font height in mm (None to prompt)
+FONT_SIZE = None  # Font size in points (None for auto-fit)
 ```
 
 Run:
@@ -57,7 +57,7 @@ brander.carve_text(
     position="bottom",
     text_scale=0.7,
     carve_depth=1.0,
-    font_height_mm=None  # Optional: specific font height in mm (None for auto-fit)
+    font_size=100  # Optional: specific font size in points (None for auto-fit)
 )
 ```
 

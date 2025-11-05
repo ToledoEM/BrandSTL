@@ -27,7 +27,6 @@ class STLBrander:
     def _get_default_font(self) -> str:
         """Get default system font path"""
         possible_fonts = [
-            "/Users/enrique/Library/Fonts/xkcd.ttf",
             "/System/Library/Fonts/Helvetica.ttc",
             "/System/Library/Fonts/SFNSDisplay.ttf",
             "/Library/Fonts/Arial.ttf",
@@ -43,20 +42,16 @@ class STLBrander:
     def create_text_mesh(
         self,
         text: str,
-        width_mm: float,
-        height_mm: float,
         depth_mm: float = 2.0,
-        font_height_mm: Optional[float] = None
+        font_size: Optional[int] = None
     ) -> trimesh.Trimesh:
         """
         Create 3D text mesh for carving
         
         Args:
             text: Text to create
-            width_mm: Width in mm
-            height_mm: Height in mm  
             depth_mm: Extrusion depth in mm
-            font_height_mm: Desired font height in mm (optional, will auto-fit if not provided)
+            font_size: Font size in points (optional, will auto-fit if not provided)
         
         Returns:
             Text mesh
@@ -69,13 +64,14 @@ class STLBrander:
         
         # Load font
         try:
-            font = ImageFont.truetype(self.font_path, 200)  # Start with large font
+            font_size_to_use = font_size if font_size is not None else 200
+            font = ImageFont.truetype(self.font_path, font_size_to_use)
         except:
             try:
-                font = ImageFont.truetype("/Users/enrique/Library/Fonts/xkcd.ttf", 200)
+                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size_to_use)
             except:
                 try:
-                    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 200)
+                    font = ImageFont.truetype("/Library/Fonts/Arial.ttf", font_size_to_use)
                 except:
                     font = ImageFont.load_default()
                     print("Warning: Using default font")
@@ -84,32 +80,6 @@ class STLBrander:
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
-        
-        # If font_height_mm is specified, adjust font size to match requested height
-        if font_height_mm is not None:
-            # Calculate required font size to achieve desired height in mm
-            pixels_per_mm = img_height / height_mm
-            required_height_px = font_height_mm * pixels_per_mm
-            
-            if text_height > 0:
-                font_scale = required_height_px / text_height
-                new_font_size = max(10, int(200 * font_scale))  # Ensure minimum font size
-                
-                # Reload font with correct size
-                try:
-                    font = ImageFont.truetype(self.font_path, new_font_size)
-                except:
-                    try:
-                        font = ImageFont.truetype("/Users/enrique/Library/Fonts/xkcd.ttf", new_font_size)
-                    except:
-                        font = ImageFont.load_default()
-                
-                print(f"Debug: Using font size {new_font_size} for height {font_height_mm}mm")
-                
-                # Recalculate text dimensions with new font
-                bbox = draw.textbbox((0, 0), text, font=font)
-                text_width = bbox[2] - bbox[0]
-                text_height = bbox[3] - bbox[1]
         
         x = (img_width - text_width) // 2
         y = (img_height - text_height) // 2
@@ -123,8 +93,6 @@ class STLBrander:
         # Create 3D mesh from text image
         mesh = self._image_to_3d_mesh(
             img_array,
-            width_mm,
-            height_mm,
             depth_mm
         )
         
@@ -133,8 +101,6 @@ class STLBrander:
     def _image_to_3d_mesh(
         self,
         img_array: np.ndarray,
-        width: float,
-        height: float,
         depth: float
     ) -> trimesh.Trimesh:
         """
@@ -142,8 +108,6 @@ class STLBrander:
         
         Args:
             img_array: 2D array with values 0-1
-            width: Width in mm
-            height: Height in mm
             depth: Depth in mm
         
         Returns:
@@ -169,25 +133,15 @@ class STLBrander:
             voxel_grid = trimesh.voxel.VoxelGrid(voxels)
             mesh = voxel_grid.marching_cubes
             
-            # Scale to desired dimensions
-            current_size = mesh.bounds[1] - mesh.bounds[0]
-            scale_x = width / current_size[0] if current_size[0] > 0 else 1
-            scale_y = height / current_size[1] if current_size[1] > 0 else 1
-            scale_z = depth / current_size[2] if current_size[2] > 0 else 1
-            
-            mesh.apply_scale([scale_x, scale_y, scale_z])
-            
             return mesh
         except Exception as e:
             print(f"Warning: Voxel conversion failed: {e}")
             # Fallback: create simple extruded shape
-            return self._create_fallback_mesh(binary, width, height, depth)
+            return self._create_fallback_mesh(binary, depth)
     
     def _create_fallback_mesh(
         self,
         binary: np.ndarray,
-        width: float,
-        height: float,
         depth: float
     ) -> trimesh.Trimesh:
         """
@@ -208,8 +162,8 @@ class STLBrander:
         step = max(1, len(coords) // 2000)
         sampled = coords[::step]
         
-        pixel_width = width / w
-        pixel_height = height / h
+        pixel_width = 1.0 / w
+        pixel_height = 1.0 / h
         
         for y, x in sampled:
             # Create small box for each pixel
@@ -217,8 +171,8 @@ class STLBrander:
                 extents=[pixel_width * 1.5, pixel_height * 1.5, depth]
             )
             box.apply_translation([
-                x * pixel_width - width / 2,
-                y * pixel_height - height / 2,
+                x * pixel_width - 0.5,
+                y * pixel_height - 0.5,
                 depth / 2
             ])
             meshes.append(box)
@@ -238,7 +192,7 @@ class STLBrander:
         position: Literal["bottom", "top", "front", "back", "left", "right"] = "bottom",
         text_scale: float = 0.7,
         carve_depth: float = 1.0,
-        font_height_mm: Optional[float] = None
+        font_size: Optional[int] = None
     ) -> bool:
         """
         Carve text into STL file
@@ -250,7 +204,7 @@ class STLBrander:
             position: Where to place text
             text_scale: Scale relative to model size (0.0-1.0)
             carve_depth: How deep to carve (mm)
-            font_height_mm: Desired font height in mm (optional, will auto-fit if not provided)
+            font_size: Font size in points (optional, will auto-fit if not provided)
         
         Returns:
             True if successful
@@ -268,9 +222,9 @@ class STLBrander:
             size = bounds[1] - bounds[0]
             
             # Calculate text dimensions based on position
-            if font_height_mm is not None:
-                # Use absolute font height - set text_height to font_height_mm
-                text_height = font_height_mm
+            if font_size is not None:
+                # Use absolute font size - set text_height to font_size
+                text_height = font_size
                 
                 # Calculate text_width based on actual text dimensions and character count
                 # Create a temporary image to measure actual text width
@@ -311,7 +265,7 @@ class STLBrander:
                     scale_factor = available_height / text_height
                     text_height *= scale_factor
                     text_width *= scale_factor
-                    print(f"Warning: Requested font height {font_height_mm}mm is too tall for available space. Scaled down to fit.")
+                    print(f"Warning: Requested font size {font_size}pt is too tall for available space. Scaled down to fit.")
             else:
                 # Original logic: calculate based on text_scale
                 if position in ["bottom", "top"]:
@@ -326,15 +280,13 @@ class STLBrander:
             
             print(f"Creating text: '{brand_text}'")
             
-            # Pass the actual font height to create_text_mesh
-            actual_font_height = font_height_mm if font_height_mm is not None else None
+            # Pass the actual font size to create_text_mesh
+            actual_font_size = font_size if font_size is not None else None
             
             text_mesh = self.create_text_mesh(
                 brand_text,
-                text_width,
-                text_height,
                 carve_depth,
-                actual_font_height
+                actual_font_size
             )
             
             if len(text_mesh.vertices) == 0:
@@ -363,7 +315,7 @@ class STLBrander:
                 return False
             
             print(f"Exporting to {output_stl}...")
-            result.export(output_stl)
+            result.export(output_stl, file_type='stl_ascii' if output_stl.endswith('_ascii.stl') else 'stl')
             
             print("✓ Success!")
             return True
@@ -512,10 +464,10 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 4:
-        print("Usage: python stl_brander.py input.stl output.stl 'BRAND TEXT' [position] [carve_depth] [font_height_mm]")
+        print("Usage: python stl_brander.py input.stl output.stl 'BRAND TEXT' [position] [carve_depth] [font_size]")
         print("  position: bottom, top, front, back, left, right (default: bottom)")
         print("  carve_depth: depth in mm (default: 1.0)")
-        print("  font_height_mm: font height in mm (optional, will auto-fit if not provided)")
+        print("  font_size: font size in points (optional, will auto-fit if not provided)")
         sys.exit(1)
     
     input_file = sys.argv[1]
@@ -523,7 +475,7 @@ if __name__ == "__main__":
     brand_text = sys.argv[3]
     position = sys.argv[4] if len(sys.argv) > 4 else "bottom"
     carve_depth = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
-    font_height_mm = float(sys.argv[6]) if len(sys.argv) > 6 else None
+    font_size = int(sys.argv[6]) if len(sys.argv) > 6 else None
     
     brander = STLBrander()
     
@@ -534,7 +486,7 @@ if __name__ == "__main__":
         position=position,
         text_scale=0.7,
         carve_depth=carve_depth,
-        font_height_mm=font_height_mm
+        font_size=font_size
     )
     
     if success:
