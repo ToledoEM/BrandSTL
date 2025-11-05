@@ -39,6 +39,29 @@ class STLBrander:
         
         return possible_fonts[0]
     
+    def _load_font(self, font_size: int) -> ImageFont.ImageFont:
+        """Load font with proper fallback chain"""
+        font_paths = [
+            self.font_path if self.font_path else None,
+            "xkcd.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/SFNSDisplay.ttf",
+            "/System/Library/Fonts/SFNS.ttf"
+        ]
+        
+        for font_path in font_paths:
+            if font_path is None:
+                continue
+            try:
+                if Path(font_path).exists():
+                    return ImageFont.truetype(font_path, font_size)
+            except (OSError, IOError):
+                continue
+        
+        # Final fallback
+        return ImageFont.load_default()
+    
     def create_text_mesh(
         self,
         text: str,
@@ -63,18 +86,8 @@ class STLBrander:
         draw = ImageDraw.Draw(img)
         
         # Load font
-        try:
-            font_size_to_use = font_size if font_size is not None else 200
-            font = ImageFont.truetype(self.font_path, font_size_to_use)
-        except:
-            try:
-                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size_to_use)
-            except:
-                try:
-                    font = ImageFont.truetype("/Library/Fonts/Arial.ttf", font_size_to_use)
-                except:
-                    font = ImageFont.load_default()
-                    print("Warning: Using default font")
+        font_size_to_use = font_size if font_size is not None else 200
+        font = self._load_font(font_size_to_use)
         
         # Get text size and center it
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -93,7 +106,9 @@ class STLBrander:
         # Create 3D mesh from text image
         mesh = self._image_to_3d_mesh(
             img_array,
-            depth_mm
+            depth_mm,
+            text,
+            font_size_to_use
         )
         
         return mesh
@@ -101,7 +116,9 @@ class STLBrander:
     def _image_to_3d_mesh(
         self,
         img_array: np.ndarray,
-        depth: float
+        depth: float,
+        text: str = "",
+        font_size: int = 200
     ) -> trimesh.Trimesh:
         """
         Convert 2D image to 3D mesh
@@ -109,6 +126,8 @@ class STLBrander:
         Args:
             img_array: 2D array with values 0-1
             depth: Depth in mm
+            text: Text string for high-res rendering
+            font_size: Font size for high-res rendering
         
         Returns:
             3D mesh
@@ -128,11 +147,72 @@ class STLBrander:
                 if binary[i, j]:
                     voxels[i, j, :] = True
         
-        # Convert voxels to mesh
+        # Convert voxels to mesh using improved voxel method
         try:
-            voxel_grid = trimesh.voxel.VoxelGrid(voxels)
+            # Use moderate resolution for balance of quality and file size
+            scale_factor = 2
+            large_w, large_h = w * scale_factor, h * scale_factor
+            
+            # Create high-resolution image
+            large_img = Image.new('L', (large_w, large_h), 0)
+            large_draw = ImageDraw.Draw(large_img)
+            
+            # Scale font size accordingly
+            large_font_size = int(font_size * scale_factor)
+            large_font = self._load_font(large_font_size)
+            
+            # Get text dimensions and center it
+            bbox = large_draw.textbbox((0, 0), text, font=large_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            x = (large_w - text_width) // 2
+            y = (large_h - text_height) // 2
+            
+            # Draw text on high-res image
+            large_draw.text((x, y), text, fill=255, font=large_font)
+            
+            # Convert to numpy array and create binary mask
+            large_array = np.array(large_img)
+            large_binary = large_array > 128
+            
+            # Create high-resolution voxel grid with moderate depth
+            voxel_depth = max(4, int(depth * 8))
+            large_voxels = np.zeros((large_w, large_h, voxel_depth), dtype=bool)
+            for z in range(large_voxels.shape[2]):
+                large_voxels[:, :, z] = large_binary.T
+            
+            # Generate mesh from high-res voxels
+            voxel_grid = trimesh.voxel.VoxelGrid(large_voxels)
             mesh = voxel_grid.marching_cubes
             
+            # Scale back down and normalize
+            mesh.apply_scale([1/scale_factor, 1/scale_factor, depth/large_voxels.shape[2]])
+            
+            # Center the mesh
+            mesh.apply_translation([-0.5, -0.5, 0])
+            
+            # Skip subdivision to reduce file size
+            # Apply basic smoothing by subdividing
+            # try:
+            #     mesh = mesh.subdivide()
+            # except:
+            #     pass
+            
+            # Ensure mesh is watertight
+            if not mesh.is_watertight:
+                mesh.fill_holes()
+                if not mesh.is_watertight:
+                    mesh.remove_degenerate_faces()
+                    mesh.remove_duplicate_faces()
+                    mesh.merge_vertices()
+            
+            return mesh
+            
+        except Exception as e:
+            print(f"Warning: High-res method failed ({e}), using basic voxel method")
+            # Fallback to original voxel method
+            voxel_grid = trimesh.voxel.VoxelGrid(voxels)
+            mesh = voxel_grid.marching_cubes
             return mesh
         except Exception as e:
             print(f"Warning: Voxel conversion failed: {e}")
@@ -189,19 +269,17 @@ class STLBrander:
         input_stl: str,
         output_stl: str,
         brand_text: str,
-        position: Literal["bottom", "top", "front", "back", "left", "right"] = "bottom",
         text_scale: float = 0.7,
         carve_depth: float = 1.0,
         font_size: Optional[int] = None
     ) -> bool:
         """
-        Carve text into STL file
+        Carve text into STL file (bottom position only)
         
         Args:
             input_stl: Input STL path
             output_stl: Output STL path
             brand_text: Text to carve
-            position: Where to place text
             text_scale: Scale relative to model size (0.0-1.0)
             carve_depth: How deep to carve (mm)
             font_size: Font size in points (optional, will auto-fit if not provided)
@@ -246,16 +324,9 @@ class STLBrander:
                 # Calculate aspect ratio of actual text
                 text_aspect_ratio = temp_text_width / temp_text_height if temp_text_height > 0 else 3
                 
-                # Calculate available space
-                if position in ["bottom", "top"]:
-                    available_width = size[0] * text_scale
-                    available_height = size[1] * text_scale
-                elif position in ["front", "back"]:
-                    available_width = size[0] * text_scale
-                    available_height = size[2] * text_scale
-                else:  # left, right
-                    available_width = size[1] * text_scale
-                    available_height = size[2] * text_scale
+                # Calculate available space (bottom position only)
+                available_width = size[0] * text_scale
+                available_height = size[1] * text_scale
                 
                 # Use actual aspect ratio to calculate text_width
                 text_width = min(available_width, text_height * text_aspect_ratio)
@@ -267,16 +338,9 @@ class STLBrander:
                     text_width *= scale_factor
                     print(f"Warning: Requested font size {font_size}pt is too tall for available space. Scaled down to fit.")
             else:
-                # Original logic: calculate based on text_scale
-                if position in ["bottom", "top"]:
-                    text_width = size[0] * text_scale
-                    text_height = size[1] * text_scale * 0.3
-                elif position in ["front", "back"]:
-                    text_width = size[0] * text_scale
-                    text_height = size[2] * text_scale * 0.3
-                else:  # left, right
-                    text_width = size[1] * text_scale
-                    text_height = size[2] * text_scale * 0.3
+                # Original logic: calculate based on text_scale (bottom position only)
+                text_width = size[0] * text_scale
+                text_height = size[1] * text_scale * 0.3
             
             print(f"Creating text: '{brand_text}'")
             
@@ -293,11 +357,10 @@ class STLBrander:
                 print("Error: Failed to create text mesh")
                 return False
             
-            print(f"Positioning text on {position}...")
+            print("Positioning text on bottom...")
             text_mesh = self._position_on_model(
                 text_mesh,
                 model,
-                position,
                 carve_depth
             )
             
@@ -315,7 +378,12 @@ class STLBrander:
                 return False
             
             print(f"Exporting to {output_stl}...")
-            result.export(output_stl, file_type='stl_ascii' if output_stl.endswith('_ascii.stl') else 'stl')
+            if output_stl.endswith('_ascii.stl'):
+                result.export(output_stl, file_type='stl_ascii')
+            else:
+                # Force binary format by using default STL export
+                with open(output_stl, 'wb') as f:
+                    result.export(f, file_type='stl')
             
             print("✓ Success!")
             return True
@@ -330,10 +398,9 @@ class STLBrander:
         self,
         text_mesh: trimesh.Trimesh,
         model: trimesh.Trimesh,
-        position: str,
         depth: float
     ) -> trimesh.Trimesh:
-        """Position text mesh on model for carving"""
+        """Position text mesh on model for carving (bottom position only)"""
         
         bounds = model.bounds
         center = model.centroid
@@ -343,70 +410,21 @@ class STLBrander:
         # Center text at origin
         text_mesh.apply_translation(-text_center)
         
-        # Position and orient based on face
-        if position == "bottom":
-            # Mirror text horizontally for bottom viewing
-            text_mesh.apply_scale([-1, 1, 1])
-            text_mesh.apply_translation([
-                center[0],
-                center[1],
-                bounds[0][2]
-            ])
+        # Scale text to reasonable size relative to model
+        model_size = np.max(bounds[1] - bounds[0])
+        text_size = np.max(text_bounds[1] - text_bounds[0])
+        scale_factor = (model_size * 0.3) / text_size  # Text should be 30% of model size
+        text_mesh.apply_scale(scale_factor)
         
-        elif position == "top":
-            # Flip upside down
-            text_mesh.apply_transform(
-                trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
-            )
-            text_mesh.apply_translation([
-                center[0],
-                center[1],
-                bounds[1][2]
-            ])
-        
-        elif position == "front":
-            # Rotate to vertical
-            text_mesh.apply_transform(
-                trimesh.transformations.rotation_matrix(np.pi/2, [1, 0, 0])
-            )
-            text_mesh.apply_translation([
-                center[0],
-                bounds[0][1],
-                center[2]
-            ])
-        
-        elif position == "back":
-            # Rotate to vertical, facing back
-            text_mesh.apply_transform(
-                trimesh.transformations.rotation_matrix(-np.pi/2, [1, 0, 0])
-            )
-            text_mesh.apply_translation([
-                center[0],
-                bounds[1][1],
-                center[2]
-            ])
-        
-        elif position == "left":
-            # Rotate to vertical, facing left
-            text_mesh.apply_transform(
-                trimesh.transformations.rotation_matrix(np.pi/2, [0, 1, 0])
-            )
-            text_mesh.apply_translation([
-                bounds[0][0],
-                center[1],
-                center[2]
-            ])
-        
-        elif position == "right":
-            # Rotate to vertical, facing right
-            text_mesh.apply_transform(
-                trimesh.transformations.rotation_matrix(-np.pi/2, [0, 1, 0])
-            )
-            text_mesh.apply_translation([
-                bounds[1][0],
-                center[1],
-                center[2]
-            ])
+        # Position for bottom (mirrored text)
+        text_mesh.apply_transform(
+            trimesh.transformations.rotation_matrix(np.pi, [0, 0, 1])
+        )
+        text_mesh.apply_translation([
+            center[0],
+            center[1],
+            bounds[0][2] + depth/2  # Extend into model from bottom
+        ])
         
         return text_mesh
     
@@ -464,18 +482,17 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 4:
-        print("Usage: python stl_brander.py input.stl output.stl 'BRAND TEXT' [position] [carve_depth] [font_size]")
-        print("  position: bottom, top, front, back, left, right (default: bottom)")
+        print("Usage: python stl_brander.py input.stl output.stl 'BRAND TEXT' [carve_depth] [font_size]")
         print("  carve_depth: depth in mm (default: 1.0)")
         print("  font_size: font size in points (optional, will auto-fit if not provided)")
+        print("  Note: Text is always positioned on bottom with mirroring")
         sys.exit(1)
     
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     brand_text = sys.argv[3]
-    position = sys.argv[4] if len(sys.argv) > 4 else "bottom"
-    carve_depth = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
-    font_size = int(sys.argv[6]) if len(sys.argv) > 6 else None
+    carve_depth = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
+    font_size = int(sys.argv[5]) if len(sys.argv) > 5 else None
     
     brander = STLBrander()
     
@@ -483,7 +500,6 @@ if __name__ == "__main__":
         input_file,
         output_file,
         brand_text,
-        position=position,
         text_scale=0.7,
         carve_depth=carve_depth,
         font_size=font_size
