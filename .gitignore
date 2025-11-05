@@ -48,7 +48,8 @@ Thumbs.db
 
 # STL files (except examples)
 *.stl
-
+stls/
+*3mf
 
 # Temporary files
 *.tmp
